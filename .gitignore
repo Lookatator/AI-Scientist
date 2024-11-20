@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+# Container files and folders
+*.sif/
+
 # Distribution / packaging
 .Python
 build/
@@ -168,6 +171,7 @@ cython_debug/
 data/
 *ckpt.pt
 *.zip
+*.npz
 ICLR2022-OpenReviewData/
 templates/*/run_0/
 templates/*/*.png
