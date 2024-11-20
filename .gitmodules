@@ -1,0 +1,3 @@
+[submodule "templates/cppn_neat/src/PyTorch-NEAT"]
+	path = templates/cppn_neat/src/PyTorch-NEAT
+	url = https://github.com/uber-research/PyTorch-NEAT.git

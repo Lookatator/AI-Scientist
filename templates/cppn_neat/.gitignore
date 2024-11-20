@@ -1,0 +1,3 @@
+*.npz
+run_*/
+saved_data/
