@@ -3,17 +3,21 @@ from itertools import count
 import math
 import os
 import sys
+
 curr_dir = os.path.dirname(os.path.abspath(__file__))
-src_dir = os.path.join(curr_dir, 'src')
-sys.path.insert(0, os.path.join(src_dir, 'PyTorch-NEAT'))
+src_dir = os.path.join(curr_dir, "src")
+sys.path.insert(0, os.path.join(src_dir, "PyTorch-NEAT"))
 sys.path.insert(1, curr_dir)
 
 import random
 import shutil
 import numpy as np
 import torch
+import torch.functional as F
 import argparse
 from dataclasses import dataclass
+from functools import reduce
+from operator import mul
 
 import neat
 from neat.config import ConfigParameter, write_pretty_params, DefaultClassConfig
@@ -24,8 +28,6 @@ from neat.population import CompleteExtinctionException
 from neat.graphs import required_for_output, creates_cycle
 from neat.activations import ActivationFunctionSet
 from neat.aggregations import AggregationFunctionSet
-from pytorch_neat.activations import str_to_activation
-from pytorch_neat.aggregations import str_to_aggregation
 
 from src.ppo.run import run_ppo
 from parallel_evaluator import ParallelEvaluator
@@ -34,7 +36,45 @@ from evogym import is_connected, has_actuator, get_full_connectivity, hashable
 import evogym.envs  # To register the environments, otherwise they are not available
 
 ################################################################################
+# Configuration Dataclasses
+################################################################################
+
+@dataclass
+class PPOConfig:
+    verbose_ppo: int = 1
+    learning_rate: float = 1e-3
+    n_steps: int = 128
+    batch_size: int = 64
+    n_epochs: int = 4
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    vf_coef: float = 0.5
+    max_grad_norm: float = 0.5
+    ent_coef: float = 0.01
+    clip_range: float = 0.1
+    total_timesteps: int = 256000
+    log_interval: int = 100
+    n_envs: int = 4
+    n_eval_envs: int = 1
+    n_evals: int = 1
+    eval_interval: int = 1e5
+
+
+@dataclass
+class ExperimentConfig:
+    save_path: str
+    exp_name: str = "test_cppn"
+    env_name: str = "Thrower-v0"
+    pop_size: int = 12
+    structure_shape: tuple = (5, 5)
+    max_evaluations: int = 6
+    num_cores: int = 12
+    ppo: PPOConfig = PPOConfig()
+
+
+################################################################################
 # NEAT-python code
+# from https://github.com/yunshengtian/neat-python (commit 2762ab6)
 ################################################################################
 
 
@@ -55,6 +95,7 @@ class Species(object):
 
     def get_fitnesses(self):
         return [m.fitness for m in self.members.values()]
+
 
 class GenomeDistanceCache(object):
     def __init__(self, config):
@@ -78,8 +119,9 @@ class GenomeDistanceCache(object):
 
         return d
 
+
 class DefaultSpeciesSet(DefaultClassConfig):
-    """ Encapsulates the default speciation scheme. """
+    """Encapsulates the default speciation scheme."""
 
     def __init__(self, config, reporters):
         # pylint: disable=super-init-not-called
@@ -91,8 +133,9 @@ class DefaultSpeciesSet(DefaultClassConfig):
 
     @classmethod
     def parse_config(cls, param_dict):
-        return DefaultClassConfig(param_dict,
-                                  [ConfigParameter('compatibility_threshold', float)])
+        return DefaultClassConfig(
+            param_dict, [ConfigParameter("compatibility_threshold", float)]
+        )
 
     def speciate(self, config, population, generation):
         """
@@ -168,7 +211,10 @@ class DefaultSpeciesSet(DefaultClassConfig):
         gdmean = mean(distances.distances.values())
         gdstdev = stdev(distances.distances.values())
         self.reporters.info(
-            'Mean genetic distance {0:.3f}, standard deviation {1:.3f}'.format(gdmean, gdstdev))
+            "Mean genetic distance {0:.3f}, standard deviation {1:.3f}".format(
+                gdmean, gdstdev
+            )
+        )
 
     def get_species_id(self, individual_id):
         return self.genome_to_species[individual_id]
@@ -180,12 +226,17 @@ class DefaultSpeciesSet(DefaultClassConfig):
 
 class DefaultStagnation(DefaultClassConfig):
     """Keeps track of whether species are making progress and helps remove ones that are not."""
+
     @classmethod
     def parse_config(cls, param_dict):
-        return DefaultClassConfig(param_dict,
-                                  [ConfigParameter('species_fitness_func', str, 'mean'),
-                                   ConfigParameter('max_stagnation', int, 15),
-                                   ConfigParameter('species_elitism', int, 0)])
+        return DefaultClassConfig(
+            param_dict,
+            [
+                ConfigParameter("species_fitness_func", str, "mean"),
+                ConfigParameter("max_stagnation", int, 15),
+                ConfigParameter("species_elitism", int, 0),
+            ],
+        )
 
     def __init__(self, config, reporters):
         # pylint: disable=super-init-not-called
@@ -194,7 +245,10 @@ class DefaultStagnation(DefaultClassConfig):
         self.species_fitness_func = stat_functions.get(config.species_fitness_func)
         if self.species_fitness_func is None:
             raise RuntimeError(
-                "Unexpected species fitness func: {0!r}".format(config.species_fitness_func))
+                "Unexpected species fitness func: {0!r}".format(
+                    config.species_fitness_func
+                )
+            )
 
         self.reporters = reporters
 
@@ -249,6 +303,7 @@ class DefaultStagnation(DefaultClassConfig):
 
         return result
 
+
 class DefaultReproduction(DefaultClassConfig):
     """
     Implements the default NEAT-python reproduction scheme:
@@ -257,10 +312,14 @@ class DefaultReproduction(DefaultClassConfig):
 
     @classmethod
     def parse_config(cls, param_dict):
-        return DefaultClassConfig(param_dict,
-                                  [ConfigParameter('elitism', int, 0),
-                                   ConfigParameter('survival_threshold', float, 0.2),
-                                   ConfigParameter('min_species_size', int, 1)])
+        return DefaultClassConfig(
+            param_dict,
+            [
+                ConfigParameter("elitism", int, 0),
+                ConfigParameter("survival_threshold", float, 0.2),
+                ConfigParameter("min_species_size", int, 1),
+            ],
+        )
 
     def __init__(self, config, reporters, stagnation):
         # pylint: disable=super-init-not-called
@@ -309,7 +368,9 @@ class DefaultReproduction(DefaultClassConfig):
         # the population size requested by the user.
         total_spawn = sum(spawn_amounts)
         norm = pop_size / total_spawn
-        spawn_amounts = [max(min_species_size, int(round(n * norm))) for n in spawn_amounts]
+        spawn_amounts = [
+            max(min_species_size, int(round(n * norm))) for n in spawn_amounts
+        ]
 
         return spawn_amounts
 
@@ -353,7 +414,9 @@ class DefaultReproduction(DefaultClassConfig):
 
         adjusted_fitnesses = [s.adjusted_fitness for s in remaining_species]
         avg_adjusted_fitness = mean(adjusted_fitnesses)  # type: float
-        self.reporters.info("Average adjusted fitness: {:.3f}".format(avg_adjusted_fitness))
+        self.reporters.info(
+            "Average adjusted fitness: {:.3f}".format(avg_adjusted_fitness)
+        )
 
         # Compute the number of new members for each species in the new generation.
         previous_sizes = [len(s.members) for s in remaining_species]
@@ -362,8 +425,9 @@ class DefaultReproduction(DefaultClassConfig):
         # self.reproduction_config.elitism)? That would probably produce more accurate tracking
         # of population sizes and relative fitnesses... doing. TODO: document.
         min_species_size = max(min_species_size, self.reproduction_config.elitism)
-        spawn_amounts = self.compute_spawn(adjusted_fitnesses, previous_sizes,
-                                           pop_size, min_species_size)
+        spawn_amounts = self.compute_spawn(
+            adjusted_fitnesses, previous_sizes, pop_size, min_species_size
+        )
 
         new_population = {}
         species.species = {}
@@ -383,7 +447,7 @@ class DefaultReproduction(DefaultClassConfig):
 
             # Transfer elites to new generation.
             if self.reproduction_config.elitism > 0:
-                for i, m in old_members[:self.reproduction_config.elitism]:
+                for i, m in old_members[: self.reproduction_config.elitism]:
                     new_population[i] = m
                     spawn -= 1
 
@@ -391,8 +455,11 @@ class DefaultReproduction(DefaultClassConfig):
                 continue
 
             # Only use the survival threshold fraction to use as parents for the next generation.
-            repro_cutoff = int(math.ceil(self.reproduction_config.survival_threshold *
-                                         len(old_members)))
+            repro_cutoff = int(
+                math.ceil(
+                    self.reproduction_config.survival_threshold * len(old_members)
+                )
+            )
             # Use at least two parents no matter what the threshold fraction result is.
             repro_cutoff = max(repro_cutoff, 2)
             old_members = old_members[:repro_cutoff]
@@ -419,9 +486,19 @@ class DefaultReproduction(DefaultClassConfig):
 
 class DefaultGenomeConfig(object):
     """Sets up and holds configuration information for the DefaultGenome class."""
-    allowed_connectivity = ['unconnected', 'fs_neat_nohidden', 'fs_neat', 'fs_neat_hidden',
-                            'full_nodirect', 'full', 'full_direct',
-                            'partial_nodirect', 'partial', 'partial_direct']
+
+    allowed_connectivity = [
+        "unconnected",
+        "fs_neat_nohidden",
+        "fs_neat",
+        "fs_neat_hidden",
+        "full_nodirect",
+        "full",
+        "full_direct",
+        "partial_nodirect",
+        "partial",
+        "partial_direct",
+    ]
 
     def __init__(self, params):
         # Create full set of available activation functions.
@@ -430,24 +507,26 @@ class DefaultGenomeConfig(object):
         self.aggregation_function_defs = AggregationFunctionSet()
         self.aggregation_defs = self.aggregation_function_defs
 
-        self._params = [ConfigParameter('num_inputs', int),
-                        ConfigParameter('num_outputs', int),
-                        ConfigParameter('num_hidden', int),
-                        ConfigParameter('feed_forward', bool),
-                        ConfigParameter('compatibility_disjoint_coefficient', float),
-                        ConfigParameter('compatibility_weight_coefficient', float),
-                        ConfigParameter('conn_add_prob', float),
-                        ConfigParameter('conn_delete_prob', float),
-                        ConfigParameter('node_add_prob', float),
-                        ConfigParameter('node_delete_prob', float),
-                        ConfigParameter('single_structural_mutation', bool, 'false'),
-                        ConfigParameter('structural_mutation_surer', str, 'default'),
-                        ConfigParameter('initial_connection', str, 'unconnected')]
+        self._params = [
+            ConfigParameter("num_inputs", int),
+            ConfigParameter("num_outputs", int),
+            ConfigParameter("num_hidden", int),
+            ConfigParameter("feed_forward", bool),
+            ConfigParameter("compatibility_disjoint_coefficient", float),
+            ConfigParameter("compatibility_weight_coefficient", float),
+            ConfigParameter("conn_add_prob", float),
+            ConfigParameter("conn_delete_prob", float),
+            ConfigParameter("node_add_prob", float),
+            ConfigParameter("node_delete_prob", float),
+            ConfigParameter("single_structural_mutation", bool, "false"),
+            ConfigParameter("structural_mutation_surer", str, "default"),
+            ConfigParameter("initial_connection", str, "unconnected"),
+        ]
 
         # Gather configuration data from the gene classes.
-        self.node_gene_type = params['node_gene_type']
+        self.node_gene_type = params["node_gene_type"]
         self._params += self.node_gene_type.get_config_params()
-        self.connection_gene_type = params['connection_gene_type']
+        self.connection_gene_type = params["connection_gene_type"]
         self._params += self.connection_gene_type.get_config_params()
 
         # Use the configuration data to interpret the supplied parameters.
@@ -463,27 +542,29 @@ class DefaultGenomeConfig(object):
 
         # Verify that initial connection type is valid.
         # pylint: disable=access-member-before-definition
-        if 'partial' in self.initial_connection:
+        if "partial" in self.initial_connection:
             c, p = self.initial_connection.split()
             self.initial_connection = c
             self.connection_fraction = float(p)
             if not (0 <= self.connection_fraction <= 1):
                 raise RuntimeError(
-                    "'partial' connection value must be between 0.0 and 1.0, inclusive.")
+                    "'partial' connection value must be between 0.0 and 1.0, inclusive."
+                )
 
         assert self.initial_connection in self.allowed_connectivity
 
         # Verify structural_mutation_surer is valid.
         # pylint: disable=access-member-before-definition
-        if self.structural_mutation_surer.lower() in ['1', 'yes', 'true', 'on']:
-            self.structural_mutation_surer = 'true'
-        elif self.structural_mutation_surer.lower() in ['0', 'no', 'false', 'off']:
-            self.structural_mutation_surer = 'false'
-        elif self.structural_mutation_surer.lower() == 'default':
-            self.structural_mutation_surer = 'default'
+        if self.structural_mutation_surer.lower() in ["1", "yes", "true", "on"]:
+            self.structural_mutation_surer = "true"
+        elif self.structural_mutation_surer.lower() in ["0", "no", "false", "off"]:
+            self.structural_mutation_surer = "false"
+        elif self.structural_mutation_surer.lower() == "default":
+            self.structural_mutation_surer = "default"
         else:
             error_string = "Invalid structural_mutation_surer {!r}".format(
-                self.structural_mutation_surer)
+                self.structural_mutation_surer
+            )
             raise RuntimeError(error_string)
 
         self.node_indexer = None
@@ -495,19 +576,24 @@ class DefaultGenomeConfig(object):
         self.aggregation_function_defs.add(name, func)
 
     def save(self, f):
-        if 'partial' in self.initial_connection:
+        if "partial" in self.initial_connection:
             if not (0 <= self.connection_fraction <= 1):
                 raise RuntimeError(
-                    "'partial' connection value must be between 0.0 and 1.0, inclusive.")
-            f.write('initial_connection      = {0} {1}\n'.format(self.initial_connection,
-                                                                 self.connection_fraction))
+                    "'partial' connection value must be between 0.0 and 1.0, inclusive."
+                )
+            f.write(
+                "initial_connection      = {0} {1}\n".format(
+                    self.initial_connection, self.connection_fraction
+                )
+            )
         else:
-            f.write('initial_connection      = {0}\n'.format(self.initial_connection))
+            f.write("initial_connection      = {0}\n".format(self.initial_connection))
 
         assert self.initial_connection in self.allowed_connectivity
 
-        write_pretty_params(f, self, [p for p in self._params
-                                      if 'initial_connection' not in p.name])
+        write_pretty_params(
+            f, self, [p for p in self._params if "initial_connection" not in p.name]
+        )
 
     def get_new_node_key(self, node_dict):
         if self.node_indexer is None:
@@ -520,15 +606,16 @@ class DefaultGenomeConfig(object):
         return new_id
 
     def check_structural_mutation_surer(self):
-        if self.structural_mutation_surer == 'true':
+        if self.structural_mutation_surer == "true":
             return True
-        elif self.structural_mutation_surer == 'false':
+        elif self.structural_mutation_surer == "false":
             return False
-        elif self.structural_mutation_surer == 'default':
+        elif self.structural_mutation_surer == "default":
             return self.single_structural_mutation
         else:
             error_string = "Invalid structural_mutation_surer {!r}".format(
-                self.structural_mutation_surer)
+                self.structural_mutation_surer
+            )
             raise RuntimeError(error_string)
 
 
@@ -556,8 +643,8 @@ class DefaultGenome(object):
 
     @classmethod
     def parse_config(cls, param_dict):
-        param_dict['node_gene_type'] = DefaultNodeGene
-        param_dict['connection_gene_type'] = DefaultConnectionGene
+        param_dict["node_gene_type"] = DefaultNodeGene
+        param_dict["connection_gene_type"] = DefaultConnectionGene
         return DefaultGenomeConfig(param_dict)
 
     @classmethod
@@ -592,10 +679,10 @@ class DefaultGenome(object):
 
         # Add connections based on initial connectivity type.
 
-        if 'fs_neat' in config.initial_connection:
-            if config.initial_connection == 'fs_neat_nohidden':
+        if "fs_neat" in config.initial_connection:
+            if config.initial_connection == "fs_neat_nohidden":
                 self.connect_fs_neat_nohidden(config)
-            elif config.initial_connection == 'fs_neat_hidden':
+            elif config.initial_connection == "fs_neat_hidden":
                 self.connect_fs_neat_hidden(config)
             else:
                 if config.num_hidden > 0:
@@ -603,12 +690,14 @@ class DefaultGenome(object):
                         "Warning: initial_connection = fs_neat will not connect to hidden nodes;",
                         "\tif this is desired, set initial_connection = fs_neat_nohidden;",
                         "\tif not, set initial_connection = fs_neat_hidden",
-                        sep='\n', file=sys.stderr)
+                        sep="\n",
+                        file=sys.stderr,
+                    )
                 self.connect_fs_neat_nohidden(config)
-        elif 'full' in config.initial_connection:
-            if config.initial_connection == 'full_nodirect':
+        elif "full" in config.initial_connection:
+            if config.initial_connection == "full_nodirect":
                 self.connect_full_nodirect(config)
-            elif config.initial_connection == 'full_direct':
+            elif config.initial_connection == "full_direct":
                 self.connect_full_direct(config)
             else:
                 if config.num_hidden > 0:
@@ -616,26 +705,32 @@ class DefaultGenome(object):
                         "Warning: initial_connection = full with hidden nodes will not do direct input-output connections;",
                         "\tif this is desired, set initial_connection = full_nodirect;",
                         "\tif not, set initial_connection = full_direct",
-                        sep='\n', file=sys.stderr)
+                        sep="\n",
+                        file=sys.stderr,
+                    )
                 self.connect_full_nodirect(config)
-        elif 'partial' in config.initial_connection:
-            if config.initial_connection == 'partial_nodirect':
+        elif "partial" in config.initial_connection:
+            if config.initial_connection == "partial_nodirect":
                 self.connect_partial_nodirect(config)
-            elif config.initial_connection == 'partial_direct':
+            elif config.initial_connection == "partial_direct":
                 self.connect_partial_direct(config)
             else:
                 if config.num_hidden > 0:
                     print(
                         "Warning: initial_connection = partial with hidden nodes will not do direct input-output connections;",
                         "\tif this is desired, set initial_connection = partial_nodirect {0};".format(
-                            config.connection_fraction),
+                            config.connection_fraction
+                        ),
                         "\tif not, set initial_connection = partial_direct {0}".format(
-                            config.connection_fraction),
-                        sep='\n', file=sys.stderr)
+                            config.connection_fraction
+                        ),
+                        sep="\n",
+                        file=sys.stderr,
+                    )
                 self.connect_partial_nodirect(config)
 
     def configure_crossover(self, genome1, genome2, config):
-        """ Configure a new genome by crossover from two parent genomes. """
+        """Configure a new genome by crossover from two parent genomes."""
         if genome1.fitness > genome2.fitness:
             parent1, parent2 = genome1, genome2
         else:
@@ -666,21 +761,37 @@ class DefaultGenome(object):
                 self.nodes[key] = ng1.crossover(ng2)
 
     def mutate(self, config):
-        """ Mutates this genome. """
+        """Mutates this genome."""
 
         if config.single_structural_mutation:
-            div = max(1, (config.node_add_prob + config.node_delete_prob +
-                          config.conn_add_prob + config.conn_delete_prob))
+            div = max(
+                1,
+                (
+                    config.node_add_prob
+                    + config.node_delete_prob
+                    + config.conn_add_prob
+                    + config.conn_delete_prob
+                ),
+            )
             r = random.random()
-            if r < (config.node_add_prob/div):
+            if r < (config.node_add_prob / div):
                 self.mutate_add_node(config)
-            elif r < ((config.node_add_prob + config.node_delete_prob)/div):
+            elif r < ((config.node_add_prob + config.node_delete_prob) / div):
                 self.mutate_delete_node(config)
-            elif r < ((config.node_add_prob + config.node_delete_prob +
-                       config.conn_add_prob)/div):
+            elif r < (
+                (config.node_add_prob + config.node_delete_prob + config.conn_add_prob)
+                / div
+            ):
                 self.mutate_add_connection(config)
-            elif r < ((config.node_add_prob + config.node_delete_prob +
-                       config.conn_add_prob + config.conn_delete_prob)/div):
+            elif r < (
+                (
+                    config.node_add_prob
+                    + config.node_delete_prob
+                    + config.conn_add_prob
+                    + config.conn_delete_prob
+                )
+                / div
+            ):
                 self.mutate_delete_connection()
         else:
             if random.random() < config.node_add_prob:
@@ -816,9 +927,10 @@ class DefaultGenome(object):
                     node_distance += n1.distance(n2, config)
 
             max_nodes = max(len(self.nodes), len(other.nodes))
-            node_distance = (node_distance +
-                             (config.compatibility_disjoint_coefficient *
-                              disjoint_nodes)) / max_nodes
+            node_distance = (
+                node_distance
+                + (config.compatibility_disjoint_coefficient * disjoint_nodes)
+            ) / max_nodes
 
         # Compute connection gene differences.
         connection_distance = 0.0
@@ -837,9 +949,10 @@ class DefaultGenome(object):
                     connection_distance += c1.distance(c2, config)
 
             max_conn = max(len(self.connections), len(other.connections))
-            connection_distance = (connection_distance +
-                                   (config.compatibility_disjoint_coefficient *
-                                    disjoint_connections)) / max_conn
+            connection_distance = (
+                connection_distance
+                + (config.compatibility_disjoint_coefficient * disjoint_connections)
+            ) / max_conn
 
         distance = node_distance + connection_distance
         return distance
@@ -849,7 +962,9 @@ class DefaultGenome(object):
         Returns genome 'complexity', taken to be
         (number of nodes, number of enabled connections)
         """
-        num_enabled_connections = sum([1 for cg in self.connections.values() if cg.enabled])
+        num_enabled_connections = sum(
+            [1 for cg in self.connections.values() if cg.enabled]
+        )
         return len(self.nodes), num_enabled_connections
 
     def __str__(self):
@@ -937,7 +1052,7 @@ class DefaultGenome(object):
             self.connections[connection.key] = connection
 
     def connect_full_direct(self, config):
-        """ Create a fully-connected genome, including direct input-output connections. """
+        """Create a fully-connected genome, including direct input-output connections."""
         for input_id, output_id in self.compute_full_connections(config, True):
             connection = self.create_connection(config, input_id, output_id)
             self.connections[connection.key] = connection
@@ -966,37 +1081,6 @@ class DefaultGenome(object):
         for input_id, output_id in all_connections[:num_to_add]:
             connection = self.create_connection(config, input_id, output_id)
             self.connections[connection.key] = connection
-
-@dataclass
-class PPOConfig:
-    verbose_ppo: int = 1
-    learning_rate: float = 1e-3 
-    n_steps: int = 128
-    batch_size: int = 64 
-    n_epochs: int = 4
-    gamma: float = 0.99
-    gae_lambda: float = 0.95
-    vf_coef: float = 0.5
-    max_grad_norm: float = 0.5
-    ent_coef: float = 0.01
-    clip_range: float = 0.1
-    total_timesteps: int = 256000 
-    log_interval: int = 100 
-    n_envs: int = 4 
-    n_eval_envs: int = 1 
-    n_evals: int = 1 
-    eval_interval: int = 1e5 
-
-@dataclass
-class ExperimentConfig:
-    save_path: str
-    exp_name: str = 'test_cppn'
-    env_name: str = 'Thrower-v0' 
-    pop_size: int = 12 
-    structure_shape: tuple = (5, 5)
-    max_evaluations: int = 6
-    num_cores: int = 12 
-    ppo: PPOConfig = PPOConfig()
 
 
 class Node:
@@ -1145,8 +1229,71 @@ class Leaf:
         self._reset()
 
 
-def create_cppn(genome, config, leaf_names, node_names, output_activation=None):
+################################################################################
+# CPPN code
+# from PyTorch-NEAT 
+################################################################################
 
+# Activation functions
+
+def sigmoid_activation(x):
+    return torch.sigmoid(5 * x)
+
+
+def tanh_activation(x):
+    return torch.tanh(2.5 * x)
+
+
+def abs_activation(x):
+    return torch.abs(x)
+
+
+def gauss_activation(x):
+    return torch.exp(-5.0 * x**2)
+
+
+def identity_activation(x):
+    return x
+
+
+def sin_activation(x):
+    return torch.sin(x)
+
+
+def relu_activation(x):
+    return F.relu(x)
+
+
+str_to_activation = {
+    'sigmoid': sigmoid_activation,
+    'tanh': tanh_activation,
+    'abs': abs_activation,
+    'gauss': gauss_activation,
+    'identity': identity_activation,
+    'sin': sin_activation,
+    'relu': relu_activation,
+}
+
+# Aggregation functions
+
+def sum_aggregation(inputs):
+    return sum(inputs)
+
+
+def prod_aggregation(inputs):
+    return reduce(mul, inputs, 1)
+
+
+str_to_aggregation = {
+    'sum': sum_aggregation,
+    'prod': prod_aggregation,
+}
+
+
+def create_cppn(genome, config, leaf_names, node_names, output_activation=None):
+    """
+    Create CPPN from genome
+    """
     genome_config = config.genome_config
     required = required_for_output(
         genome_config.input_keys, genome_config.output_keys, genome.connections
@@ -1214,31 +1361,38 @@ def create_cppn(genome, config, leaf_names, node_names, output_activation=None):
 
     return outputs
 
+################################################################################
+# Co-optimizing the design and control of soft robots.
+# Code taken from EvoGym - https://github.com/EvolutionGym/evogym - v2.0.0
+################################################################################
 
 class Population(neat.Population):
     def __init__(self, config, initial_state=None):
         self.reporters = ReporterSet()
         self.config = config
         stagnation = config.stagnation_type(config.stagnation_config, self.reporters)
-        self.reproduction = config.reproduction_type(config.reproduction_config,
-                                                     self.reporters,
-                                                     stagnation)
-        if config.fitness_criterion == 'max':
+        self.reproduction = config.reproduction_type(
+            config.reproduction_config, self.reporters, stagnation
+        )
+        if config.fitness_criterion == "max":
             self.fitness_criterion = max
-        elif config.fitness_criterion == 'min':
+        elif config.fitness_criterion == "min":
             self.fitness_criterion = min
-        elif config.fitness_criterion == 'mean':
+        elif config.fitness_criterion == "mean":
             self.fitness_criterion = mean
         elif not config.no_fitness_termination:
             raise RuntimeError(
-                "Unexpected fitness_criterion: {0!r}".format(config.fitness_criterion))
+                "Unexpected fitness_criterion: {0!r}".format(config.fitness_criterion)
+            )
 
         if initial_state is None:
             # Create a population from scratch, then partition into species.
-            self.population = self.reproduction.create_new(config.genome_type,
-                                                           config.genome_config,
-                                                           config.pop_size)
-            self.species = config.species_set_type(config.species_set_config, self.reporters)
+            self.population = self.reproduction.create_new(
+                config.genome_type, config.genome_config, config.pop_size
+            )
+            self.species = config.species_set_type(
+                config.species_set_config, self.reporters
+            )
             self.generation = 0
             self.species.speciate(config, self.population, self.generation)
         else:
@@ -1267,7 +1421,9 @@ class Population(neat.Population):
         """
 
         if self.config.no_fitness_termination and (n is None):
-            raise RuntimeError("Cannot have no generational limit with no fitness termination")
+            raise RuntimeError(
+                "Cannot have no generational limit with no fitness termination"
+            )
 
         k = 0
         while n is None or k < n:
@@ -1283,29 +1439,41 @@ class Population(neat.Population):
                 valid_idx = np.where(validity)[0]
                 valid_genomes = np.array(genomes)[valid_idx]
                 while len(valid_genomes) < self.config.pop_size:
-                    new_population = self.reproduction.create_new(self.config.genome_type,
-                                                                    self.config.genome_config,
-                                                                    self.config.pop_size - len(valid_genomes))
+                    new_population = self.reproduction.create_new(
+                        self.config.genome_type,
+                        self.config.genome_config,
+                        self.config.pop_size - len(valid_genomes),
+                    )
                     new_genomes = list(new_population.items())
-                    validity = constraint_function(new_genomes, self.config, self.generation)
+                    validity = constraint_function(
+                        new_genomes, self.config, self.generation
+                    )
                     valid_idx = np.where(validity)[0]
-                    valid_genomes = np.vstack([valid_genomes, np.array(new_genomes)[valid_idx]])
+                    valid_genomes = np.vstack(
+                        [valid_genomes, np.array(new_genomes)[valid_idx]]
+                    )
 
                 self.population = dict(valid_genomes)
                 self.species.speciate(self.config, self.population, self.generation)
 
             # Evaluate all genomes using the user-provided function.
-            fitness_function(list(self.population.items()), self.config, self.generation)
+            fitness_function(
+                list(self.population.items()), self.config, self.generation
+            )
 
             # Gather and report statistics.
             best = None
             for g in self.population.values():
                 if g.fitness is None:
-                    raise RuntimeError("Fitness not assigned to genome {}".format(g.key))
+                    raise RuntimeError(
+                        "Fitness not assigned to genome {}".format(g.key)
+                    )
 
                 if best is None or g.fitness > best.fitness:
                     best = g
-            self.reporters.post_evaluate(self.config, self.population, self.species, best)
+            self.reporters.post_evaluate(
+                self.config, self.population, self.species, best
+            )
 
             # Track the best genome ever seen.
             if self.best_genome is None or best.fitness > self.best_genome.fitness:
@@ -1319,8 +1487,9 @@ class Population(neat.Population):
                     break
 
             # Create the next generation from the current generation.
-            self.population = self.reproduction.reproduce(self.config, self.species,
-                                                          self.config.pop_size, self.generation)
+            self.population = self.reproduction.reproduce(
+                self.config, self.species, self.config.pop_size, self.generation
+            )
 
             # Check for complete extinction.
             if not self.species.species:
@@ -1329,9 +1498,11 @@ class Population(neat.Population):
                 # If requested by the user, create a completely new population,
                 # otherwise raise an exception.
                 if self.config.reset_on_extinction:
-                    self.population = self.reproduction.create_new(self.config.genome_type,
-                                                                   self.config.genome_config,
-                                                                   self.config.pop_size)
+                    self.population = self.reproduction.create_new(
+                        self.config.genome_type,
+                        self.config.genome_config,
+                        self.config.pop_size,
+                    )
                 else:
                     raise CompleteExtinctionException()
 
@@ -1343,21 +1514,31 @@ class Population(neat.Population):
             self.generation += 1
 
         if self.config.no_fitness_termination:
-            self.reporters.found_solution(self.config, self.generation, self.best_genome)
+            self.reporters.found_solution(
+                self.config, self.generation, self.best_genome
+            )
 
         return self.best_genome
 
 
 def get_cppn_input(structure_shape):
-    x, y = torch.meshgrid(torch.arange(structure_shape[0]), torch.arange(structure_shape[1]))
+    x, y = torch.meshgrid(
+        torch.arange(structure_shape[0]), torch.arange(structure_shape[1])
+    )
     x, y = x.flatten(), y.flatten()
     center = (np.array(structure_shape) - 1) / 2
     d = ((x - center[0]) ** 2 + (y - center[1]) ** 2).sqrt()
     return x, y, d
 
+
 def get_robot_from_genome(genome, config):
-    nodes = create_cppn(genome, config, leaf_names=['x', 'y', 'd'], node_names=['empty', 'rigid', 'soft', 'hori', 'vert'])
-    structure_shape = config.extra_info['structure_shape']
+    nodes = create_cppn(
+        genome,
+        config,
+        leaf_names=["x", "y", "d"],
+        node_names=["empty", "rigid", "soft", "hori", "vert"],
+    )
+    structure_shape = config.extra_info["structure_shape"]
     x, y, d = get_cppn_input(structure_shape)
     material = []
     for node in nodes:
@@ -1366,35 +1547,40 @@ def get_robot_from_genome(genome, config):
     robot = material.reshape(structure_shape)
     return robot
 
+
 def eval_genome_fitness(genome, config, genome_id, generation):
     robot = get_robot_from_genome(genome, config)
-    args, env_name = config.extra_info['args'], config.extra_info['env_name']
-    
+    args, env_name = config.extra_info["args"], config.extra_info["env_name"]
+
     connectivity = get_full_connectivity(robot)
-    save_path_generation = os.path.join(config.extra_info['save_path'], f'generation_{generation}')
-    save_path_structure = os.path.join(save_path_generation, 'structure', f'{genome_id}')
-    save_path_controller = os.path.join(save_path_generation, 'controller')
+    save_path_generation = os.path.join(
+        config.extra_info["save_path"], f"generation_{generation}"
+    )
+    save_path_structure = os.path.join(
+        save_path_generation, "structure", f"{genome_id}"
+    )
+    save_path_controller = os.path.join(save_path_generation, "controller")
     np.savez(save_path_structure, robot, connectivity)
 
     fitness = run_ppo(
-        args, robot, env_name, save_path_controller, f'{genome_id}', connectivity
+        args, robot, env_name, save_path_controller, f"{genome_id}", connectivity
     )
     return fitness
+
 
 def eval_genome_constraint(genome, config, genome_id, generation):
     robot = get_robot_from_genome(genome, config)
     validity = is_connected(robot) and has_actuator(robot)
     if validity:
         robot_hash = hashable(robot)
-        if robot_hash in config.extra_info['structure_hashes']:
+        if robot_hash in config.extra_info["structure_hashes"]:
             validity = False
         else:
-            config.extra_info['structure_hashes'][robot_hash] = True
+            config.extra_info["structure_hashes"][robot_hash] = True
     return validity
 
 
 class SaveResultReporter(neat.BaseReporter):
-
     def __init__(self, save_path):
         super().__init__()
         self.save_path = save_path
@@ -1402,25 +1588,38 @@ class SaveResultReporter(neat.BaseReporter):
 
     def start_generation(self, generation):
         self.generation = generation
-        save_path_structure = os.path.join(self.save_path, f'generation_{generation}', 'structure')
-        save_path_controller = os.path.join(self.save_path, f'generation_{generation}', 'controller')
+        save_path_structure = os.path.join(
+            self.save_path, f"generation_{generation}", "structure"
+        )
+        save_path_controller = os.path.join(
+            self.save_path, f"generation_{generation}", "controller"
+        )
         os.makedirs(save_path_structure, exist_ok=True)
         os.makedirs(save_path_controller, exist_ok=True)
 
     def post_evaluate(self, config, population, species, best_genome):
-        save_path_ranking = os.path.join(self.save_path, f'generation_{self.generation}', 'output.txt')
-        genome_id_list, genome_list = np.arange(len(population)), np.array(list(population.values()))
-        sorted_idx = sorted(genome_id_list, key=lambda i: genome_list[i].fitness, reverse=True)
-        genome_id_list, genome_list = list(genome_id_list[sorted_idx]), list(genome_list[sorted_idx])
-        with open(save_path_ranking, 'w') as f:
-            out = ''
+        save_path_ranking = os.path.join(
+            self.save_path, f"generation_{self.generation}", "output.txt"
+        )
+        genome_id_list, genome_list = (
+            np.arange(len(population)),
+            np.array(list(population.values())),
+        )
+        sorted_idx = sorted(
+            genome_id_list, key=lambda i: genome_list[i].fitness, reverse=True
+        )
+        genome_id_list, genome_list = (
+            list(genome_id_list[sorted_idx]),
+            list(genome_list[sorted_idx]),
+        )
+        with open(save_path_ranking, "w") as f:
+            out = ""
             for genome_id, genome in zip(genome_id_list, genome_list):
-                out += f'{genome_id}\t\t{genome.fitness}\n'
+                out += f"{genome_id}\t\t{genome.fitness}\n"
             f.write(out)
 
-def run_cppn_neat(
-    config: ExperimentConfig
-):
+
+def run_cppn_neat(config: ExperimentConfig):
     exp_name, env_name, pop_size, structure_shape, max_evaluations, num_cores = (
         config.exp_name,
         config.env_name,
@@ -1435,25 +1634,27 @@ def run_cppn_neat(
     try:
         os.makedirs(save_path)
     except FileExistsError:
-        print(f'THIS EXPERIMENT ({exp_name}) ALREADY EXISTS')
-        print('Override? (y/n): ', end='')
+        print(f"THIS EXPERIMENT ({exp_name}) ALREADY EXISTS")
+        print("Override? (y/n): ", end="")
         ans = input()
-        if ans.lower() == 'y':
+        if ans.lower() == "y":
             shutil.rmtree(save_path)
             os.makedirs(save_path)
         else:
             return None, None
         print()
 
-    save_path_metadata = os.path.join(save_path, 'metadata.txt')
-    with open(save_path_metadata, 'w') as f:
-        f.write(f'POP_SIZE: {pop_size}\n' \
-            f'STRUCTURE_SHAPE: {structure_shape[0]} {structure_shape[1]}\n' \
-            f'MAX_EVALUATIONS: {max_evaluations}\n')
+    save_path_metadata = os.path.join(save_path, "metadata.txt")
+    with open(save_path_metadata, "w") as f:
+        f.write(
+            f"POP_SIZE: {pop_size}\n"
+            f"STRUCTURE_SHAPE: {structure_shape[0]} {structure_shape[1]}\n"
+            f"MAX_EVALUATIONS: {max_evaluations}\n"
+        )
 
     structure_hashes = {}
 
-    config_path = os.path.join(curr_dir, 'neat.cfg')
+    config_path = os.path.join(curr_dir, "neat.cfg")
     config = neat.Config(
         DefaultGenome,
         DefaultReproduction,
@@ -1461,14 +1662,14 @@ def run_cppn_neat(
         DefaultStagnation,
         config_path,
         extra_info={
-            'structure_shape': structure_shape,
-            'save_path': save_path,
-            'structure_hashes': structure_hashes,
-            'args': config.ppo, # args for run_ppo
-            'env_name': env_name,
+            "structure_shape": structure_shape,
+            "save_path": save_path,
+            "structure_hashes": structure_hashes,
+            "args": config.ppo,  # args for run_ppo
+            "env_name": env_name,
         },
         custom_config=[
-            ('NEAT', 'pop_size', pop_size),
+            ("NEAT", "pop_size", pop_size),
         ],
     )
 
@@ -1481,30 +1682,43 @@ def run_cppn_neat(
     for reporter in reporters:
         pop.add_reporter(reporter)
 
-    evaluator = ParallelEvaluator(num_cores, eval_genome_fitness, eval_genome_constraint)
+    evaluator = ParallelEvaluator(
+        num_cores, eval_genome_fitness, eval_genome_constraint
+    )
 
     pop.run(
         evaluator.evaluate_fitness,
         evaluator.evaluate_constraint,
-        n=np.ceil(max_evaluations / pop_size))
+        n=np.ceil(max_evaluations / pop_size),
+    )
 
     best_robot = get_robot_from_genome(pop.best_genome, config)
     best_fitness = pop.best_genome.fitness
     return best_robot, best_fitness
 
+################################################################################
+# Main
+################################################################################
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='CPPN-NEAT with save path specification')
-    parser.add_argument('--path', type=str, required=True, help='Path to save experiment data')
+def main():
+    parser = argparse.ArgumentParser(
+        description="CPPN-NEAT with save path specification"
+    )
+    parser.add_argument(
+        "--path", type=str, required=True, help="Path to save experiment data"
+    )
     args = parser.parse_args()
 
     seed = 0
     random.seed(seed)
     np.random.seed(seed)
-    
+
     config = ExperimentConfig(save_path=args.path)
     best_robot, best_fitness = run_cppn_neat(config)
-    
-    print('Best robot:')
+
+    print("Best robot:")
     print(best_robot)
-    print('Best fitness:', best_fitness)
+    print("Best fitness:", best_fitness)
+
+if __name__ == "__main__":
+    main()
