@@ -1,0 +1,431 @@
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2024_conference,times}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{titletoc}
+
+\usepackage{subcaption}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{multirow}
+\usepackage{color}
+\usepackage{colortbl}
+\usepackage{cleveref}
+\usepackage{algorithm}
+\usepackage{algorithmicx}
+\usepackage{algpseudocode}
+
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+\graphicspath{{../}} % To reference your generated figures, see below.
+\begin{filecontents}{references.bib}
+@article{hiller2014dynamic,
+  title={Dynamic simulation of soft multimaterial 3d-printed objects},
+  author={Hiller, Jonathan and Lipson, Hod},
+  journal={Soft robotics},
+  volume={1},
+  number={1},
+  pages={88--101},
+  year={2014},
+  publisher={Mary Ann Liebert, Inc. 140 Huguenot Street, 3rd Floor New Rochelle, NY 10801 USA}
+}
+
+@article{medvet2020vsr,
+  title = {2D-VSR-Sim: A simulation tool for the optimization of 2-D voxel-based soft robots},
+  journal = {SoftwareX},
+  volume = {12},
+  pages = {100573},
+  year = {2020},
+  issn = {2352-7110},
+  doi = {https://doi.org/10.1016/j.softx.2020.100573},
+  url = {https://www.sciencedirect.com/science/article/pii/S2352711020302867},
+  author = {Medvet, Eric and Bartoli, Alberto and {De Lorenzo}, Andrea and Seriani, Stefano}
+}
+  
+@misc{schulman2017proximal,
+  title={Proximal Policy Optimization Algorithms}, 
+  author={Schulman, John and Wolski, Filip and Dhariwal, Prafulla and Radford, Alec and Klimov, Oleg},
+  year={2017},
+  eprint={1707.06347},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG}
+}
+
+@article{cheney2014unshackling,
+author = {Cheney, Nick and MacCurdy, Robert and Clune, Jeff and Lipson, Hod},
+title = {Unshackling Evolution: Evolving Soft Robots with Multiple Materials and a Powerful Generative Encoding},
+year = {2014},
+issue_date = {August 2014},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+volume = {7},
+number = {1},
+url = {https://doi.org/10.1145/2661735.2661737},
+doi = {10.1145/2661735.2661737},
+journal = {SIGEVOlution},
+month = aug,
+pages = {11--23},
+numpages = {13}
+}
+
+@misc{corucci2017evolving,
+      title={Evolving soft locomotion in aquatic and terrestrial environments: effects of material properties and environmental transitions}, 
+      author={Corucci, Francesco and Cheney, Nick and Giorgio-Serchi, Francesco and Bongard, Josh and Laschi, Cecilia},
+      year={2017},
+      eprint={1711.06605},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI}
+}
+
+@inproceedings{spielberg2019learning,
+ author = {Spielberg, Andrew and Zhao, Allan and Hu, Yuanming and Du, Tao and Matusik, Wojciech and Rus, Daniela},
+ booktitle = {Advances in Neural Information Processing Systems},
+ editor = {Wallach, H. and Larochelle, H. and Beygelzimer, A. and d\textquotesingle Alch\'{e}-Buc, F. and Fox, E. and Garnett, R.},
+ pages = {},
+ publisher = {Curran Associates, Inc.},
+ title = {Learning-In-The-Loop Optimization: End-To-End Control And Co-Design Of Soft Robots Through Learned Deep Latent Representations},
+ url = {https://proceedings.neurips.cc/paper/2019/file/438124b4c06f3a5caffab2c07863b617-Paper.pdf},
+ volume = {32},
+ year = {2019}
+}
+
+@inproceedings{sims1994evolving,
+  title={Evolving virtual creatures},
+  author={Sims, Karl},
+  booktitle={Proceedings of the 21st annual conference on Computer graphics and interactive techniques},
+  pages={15--22},
+  year={1994}
+}
+
+@article{sims1994morphology,
+    author = {Sims, Karl},
+    title = {Evolving 3D Morphology and Behavior by Competition},
+    journal = {Artificial Life},
+    volume = {1},
+    number = {4},
+    pages = {353-372},
+    year = {1994},
+    month = {07},
+    issn = {1064-5462},
+    doi = {10.1162/artl.1994.1.4.353},
+    url = {https://doi.org/10.1162/artl.1994.1.4.353},
+    eprint = {https://direct.mit.edu/artl/article-pdf/1/4/353/1661459/artl.1994.1.4.353.pdf},
+}
+
+@article{zhao2020robogrammar,
+    author = {Zhao, Allan and Xu, Jie and Konakovi\'{c}-Lukovi\'{c}, Mina and Hughes, Josephine and Spielberg, Andrew and Rus, Daniela and Matusik, Wojciech},
+    title = {RoboGrammar: Graph Grammar for Terrain-Optimized Robot Design},
+    year = {2020},
+    issue_date = {December 2020},
+    publisher = {Association for Computing Machinery},
+    address = {New York, NY, USA},
+    volume = {39},
+    number = {6},
+    issn = {0730-0301},
+    url = {https://doi.org/10.1145/3414685.3417831},
+    doi = {10.1145/3414685.3417831},
+    journal = {ACM Trans. Graph.},
+    month = nov,
+    articleno = {188},
+    numpages = {16},
+    keywords = {graph neural networks, graph grammars}
+}
+
+@misc{huang2021plasticinelab,
+      title={PlasticineLab: A Soft-Body Manipulation Benchmark with Differentiable Physics}, 
+      author={Huang, Zhiao and Hu, Yuanming and Du, Tao and Zhou, Siyuan and Su, Hao and Tenenbaum, Joshua B. and Gan, Chuang},
+      year={2021},
+      eprint={2104.03311},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
+}
+
+@misc{wang2019neural,
+      title={Neural Graph Evolution: Towards Efficient Automatic Robot Design}, 
+      author={Wang, Tingwu and Zhou, Yuhao and Fidler, Sanja and Ba, Jimmy},
+      year={2019},
+      eprint={1906.05370},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
+}
+
+
+@inproceedings{kriegman2017simulating,
+author = {Kriegman, Sam and Cappelle, Collin and Corucci, Francesco and Bernatskiy, Anton and Cheney, Nick and Bongard, Josh C.},
+title = {Simulating the Evolution of Soft and Rigid-Body Robots},
+year = {2017},
+isbn = {9781450349390},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3067695.3082051},
+doi = {10.1145/3067695.3082051},
+booktitle = {Proceedings of the Genetic and Evolutionary Computation Conference Companion},
+pages = {1117--1120},
+numpages = {4},
+keywords = {evolutionary robotics, physical simulation},
+location = {Berlin, Germany},
+series = {GECCO '17}
+}
+
+@article{corucci2018evolving,
+  title={Evolving soft locomotion in aquatic and terrestrial environments: effects of material properties and environmental transitions},
+  author={Corucci, Francesco and Cheney, Nick and Giorgio-Serchi, Francesco and Bongard, Josh and Laschi, Cecilia},
+  journal={Soft robotics},
+  volume={5},
+  number={4},
+  pages={475--495},
+  year={2018},
+  publisher={Mary Ann Liebert, Inc. 140 Huguenot Street, 3rd Floor New Rochelle, NY 10801 USA}
+}
+
+@inproceedings{liao2019data,
+  title={Data-efficient learning of morphology and controller for a microrobot},
+  author={Liao, Thomas and Wang, Grant and Yang, Brian and Lee, Rene and Pister, Kristofer and Levine, Sergey and Calandra, Roberto},
+  booktitle={2019 International Conference on Robotics and Automation (ICRA)},
+  pages={2488--2494},
+  year={2019},
+  organization={IEEE}
+}
+
+@inproceedings{schaff2019jointly,
+  title={Jointly learning to construct and control agents using deep reinforcement learning},
+  author={Schaff, Charles and Yunis, David and Chakrabarti, Ayan and Walter, Matthew R},
+  booktitle={2019 International Conference on Robotics and Automation (ICRA)},
+  pages={9798--9805},
+  year={2019},
+  organization={IEEE}
+}
+
+@software{McIntyre_neat-python,
+  title = {{neat-python}},
+  author = {McIntyre, Alan and Kallada, Matt and Miguel, Cesar G. and Feher de Silva, Carolina and Netto, Marcio Lobo},
+  howpublished = {\url{https://github.com/CodeReclaimers/neat-python}}   
+}
+
+@software{pytorch-neat,
+  title = {pytorch-neat},
+  author = {{Uber Research}},
+  howpublished = {\url{https://github.com/uber-research/PyTorch-NEAT}}   
+}
+
+@article{raffin2021stable,
+  author  = {Raffin, Antonin and Hill, Ashley and Gleave, Adam and Kanervisto, Anssi and Ernestus, Maximilian and Dormann, Noah},
+  title   = {Stable-Baselines3: Reliable Reinforcement Learning Implementations},
+  journal = {Journal of Machine Learning Research},
+  year    = {2021},
+  volume  = {22},
+  number  = {268},
+  pages   = {1-8},
+  url     = {http://jmlr.org/papers/v22/20-1364.html}
+}
+
+@inproceedings{corucci2016evolving,
+  title={Evolving swimming soft-bodied creatures},
+  author={Corucci, Francesco and Cheney, Nick and Lipson, Hod and Laschi, Cecilia and Bongard, Josh},
+  booktitle={ALIFE XV, The Fifteenth International Conference on the Synthesis and Simulation of Living Systems, Late Breaking Proceedings},
+  volume={6},
+  year={2016}
+}
+
+@article{van2019spatial,
+  title={A spatial grammar method for the computational design synthesis of virtual soft locomotion robots},
+  author={Van Diepen, Merel and Shea, Kristina},
+  journal={Journal of Mechanical Design},
+  volume={141},
+  number={10},
+  year={2019},
+  publisher={American Society of Mechanical Engineers Digital Collection}
+}
+
+@book{michalewicz2013genetic,
+  title={Genetic algorithms+ data structures= evolution programs},
+  author={Michalewicz, Zbigniew},
+  year={2013},
+  publisher={Springer Science \& Business Media}
+}
+
+@article{schulman2017proximal,
+  title={Proximal policy optimization algorithms},
+  author={Schulman, John and Wolski, Filip and Dhariwal, Prafulla and Radford, Alec and Klimov, Oleg},
+  journal={arXiv preprint arXiv:1707.06347},
+  year={2017}
+}
+
+@article{hwangbo2019learning,
+  title={Learning agile and dynamic motor skills for legged robots},
+  author={Hwangbo, Jemin and Lee, Joonho and Dosovitskiy, Alexey and Bellicoso, Dario and Tsounis, Vassilios and Koltun, Vladlen and Hutter, Marco},
+  journal={Science Robotics},
+  volume={4},
+  number={26},
+  year={2019},
+  publisher={Science Robotics}
+}
+
+@inproceedings{veenstra2020different,
+  title={How Different Encodings Affect Performance and Diversification when Evolving the Morphology and Control of 2D Virtual Creatures},
+  author={Veenstra, Frank and Glette, Kyrre},
+  booktitle={Artificial Life Conference Proceedings},
+  pages={592--601},
+  year={2020},
+  organization={MIT Press}
+}
+
+@article{ha2019reinforcement,
+  title={Reinforcement learning for improving agent design},
+  author={Ha, David},
+  journal={Artificial life},
+  volume={25},
+  number={4},
+  pages={352--365},
+  year={2019},
+  publisher={MIT Press}
+}
+
+@article{pathak2019learning,
+  title={Learning to control self-assembling morphologies: a study of generalization via modularity},
+  author={Pathak, Deepak and Lu, Chris and Darrell, Trevor and Isola, Phillip and Efros, Alexei A},
+  journal={arXiv preprint arXiv:1902.05546},
+  year={2019}
+}
+
+@article{hejna2021task,
+  title={Task-Agnostic Morphology Evolution},
+  author={Hejna III, Donald J and Abbeel, Pieter and Pinto, Lerrel},
+  journal={arXiv preprint arXiv:2102.13100},
+  year={2021}
+}
+
+@inproceedings{medvet2020evolution,
+  title={Evolution of distributed neural controllers for voxel-based soft robots},
+  author={Medvet, Eric and Bartoli, Alberto and De Lorenzo, Andrea and Fidel, Giulio},
+  booktitle={Proceedings of the 2020 Genetic and Evolutionary Computation Conference},
+  pages={112--120},
+  year={2020}
+}
+
+@article{bhatia2021evolution,
+  title={Evolution gym: A large-scale benchmark for evolving soft robots},
+  author={Bhatia, Jagdeep and Jackson, Holly and Tian, Yunsheng and Xu, Jie and Matusik, Wojciech},
+  journal={Advances in Neural Information Processing Systems},
+  volume={34},
+  year={2021}
+}
+
+@article{stanley2007compositional,
+  title={Compositional pattern producing networks: A novel abstraction of development},
+  author={Stanley, Kenneth O},
+  journal={Genetic programming and evolvable machines},
+  volume={8},
+  number={2},
+  pages={131--162},
+  year={2007},
+  publisher={Springer}
+}
+
+@article{stanley2002evolving,
+  title={Evolving neural networks through augmenting topologies},
+  author={Stanley, Kenneth O and Miikkulainen, Risto},
+  journal={Evolutionary computation},
+  volume={10},
+  number={2},
+  pages={99--127},
+  year={2002},
+  publisher={MIT Press}
+}
+
+@inproceedings{zardini2021seeking,
+ title={Seeking Quality Diversity in Evolutionary Co-design of Morphology and Control of Soft Tensegrity Modular Robots},
+ author={Zardini, Enrico and Zappetti, Davide and Zambrano, Davide and Iacca, Giovanni and Floreano, Dario},
+ booktitle={Genetic and Evolutionary Computation Conference},
+ year={2021}
+}
+
+@article{nygaard2021environmental,
+  title={Environmental adaptation of robot morphology and control through real-world evolution},
+  author={Nygaard, T{\o}nnes F and Martin, Charles P and Howard, David and Torresen, Jim and Glette, Kyrre},
+  journal={Evolutionary Computation},
+  volume={29},
+  number={4},
+  pages={441--461},
+  year={2021},
+  publisher={MIT Press}
+}
+
+\end{filecontents}
+
+\title{TITLE HERE}
+
+\author{LLM\\
+Department of Computer Science\\
+University of LLMs\\
+}
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+ABSTRACT HERE
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+INTRO HERE
+
+\section{Related Work}
+\label{sec:related}
+RELATED WORK HERE
+
+\section{Background}
+\label{sec:background}
+BACKGROUND HERE
+
+\section{Method}
+\label{sec:method}
+METHOD HERE
+
+\section{Experimental Setup}
+\label{sec:experimental}
+EXPERIMENTAL SETUP HERE
+
+\section{Results}
+\label{sec:results}
+RESULTS HERE
+
+% EXAMPLE FIGURE: REPLACE AND ADD YOUR OWN FIGURES / CAPTIONS
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\textwidth]{val_loss_enwik8.png}
+        \label{fig:first-run}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\textwidth]{train_loss_enwik8.png}
+        \label{fig:second-run}
+    \end{subfigure}
+    \caption{PLEASE FILL IN CAPTION HERE}
+    \label{fig:first_figure}
+\end{figure}
+
+\section{Conclusions and Future Work}
+\label{sec:conclusion}
+CONCLUSIONS HERE
+
+This work was generated by \textsc{The AI Scientist} \citep{lu2024aiscientist}.
+
+\bibliographystyle{iclr2024_conference}
+\bibliography{references}
+
+\end{document}
