@@ -88,6 +88,48 @@ def get_exp_gen_data(exp_name, load_dir, gen):
         robot_data.append((int(line.split()[0]), float(line.split()[1])))
     return robot_data
 
+def save_step_robot_image(env_name, body_path, ctrl_path, seed=42, step=-1):
+    # Load robot structure
+    structure_data = np.load(body_path)
+    structure = []
+    for key, value in structure_data.items():
+        structure.append(value)
+    structure = tuple(structure)
+
+    # Load trained model
+    model = PPO.load(ctrl_path)
+
+    # Create environment
+    vec_env = make_vec_env(
+        env_name,
+        n_envs=1,
+        seed=seed,
+        env_kwargs={
+            "body": structure[0],
+            "connections": structure[1],
+            "render_mode": "img",
+        },
+    )
+
+    # Run simulation for a few steps to get robot in motion
+    obs = vec_env.reset()
+    # Run simulation until the end to get final state
+    # Collect all images during rollout
+    images = []
+    while True:
+        action, _states = model.predict(obs, deterministic=True)
+        images.append(vec_env.env_method("render")[0])
+        obs, _, done, _ = vec_env.step(action)
+        if done:
+            break
+            
+    # Get image at step
+    img = images[min(step, len(images) - 1)]
+    
+    # Clean up
+    vec_env.close()
+    return img
+
 
 def save_robot_gif(out_path, env_name, body_path, ctrl_path, seed=42):
     global GIF_RESOLUTION
@@ -113,7 +155,7 @@ def save_robot_gif(out_path, env_name, body_path, ctrl_path, seed=42):
     )
 
     obs = vec_env.reset()
-    imgs = [vec_env.env_method("render")[0]]  # vec env is stupid; .render() dosent work
+    imgs = [vec_env.env_method("render")[0]]  # vec env.render() does not work
     done = False
     while not done:
         action, _states = model.predict(obs, deterministic=True)
