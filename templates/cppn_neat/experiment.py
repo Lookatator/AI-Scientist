@@ -1702,10 +1702,10 @@ def run_cppn_neat(config: ExperimentConfig):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="CPPN-NEAT with save path specification"
+        description="CPPN-NEAT for co-optimizing the design and control of soft robots"
     )
     parser.add_argument(
-        "--path", type=str, required=True, help="Path to save experiment data"
+        "--out_dir", type=str, required=True, help="Path to save experiment data"
     )
     args = parser.parse_args()
 
@@ -1713,7 +1713,7 @@ def main():
     random.seed(seed)
     np.random.seed(seed)
 
-    config = ExperimentConfig(save_path=args.path)
+    config = ExperimentConfig(save_path=args.out_dir)
     best_robot, best_fitness = run_cppn_neat(config)
 
     print("Best robot:")
