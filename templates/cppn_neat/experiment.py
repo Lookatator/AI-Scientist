@@ -3,6 +3,8 @@ from itertools import count
 import math
 import os
 import sys
+import json
+from datetime import datetime
 
 curr_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.join(curr_dir, "src")
@@ -52,7 +54,7 @@ class PPOConfig:
     max_grad_norm: float = 0.5
     ent_coef: float = 0.01
     clip_range: float = 0.1
-    total_timesteps: int = 256000
+    total_timesteps: int = 12000  # TODO: 256_000
     log_interval: int = 100
     n_envs: int = 4
     n_eval_envs: int = 1
@@ -1581,16 +1583,29 @@ def eval_genome_constraint(genome, config, genome_id, generation):
 
 
 class SaveResultReporter(neat.BaseReporter):
+    """Reporter that saves generation results to disk, including robot structures and fitness rankings."""
     def __init__(self, save_path):
+        """Initialize the reporter with the path where results will be saved.
+        
+        Args:
+            save_path: Base directory path for saving results
+        """
         super().__init__()
         self.save_path = save_path
         self.generation = None
 
     def start_generation(self, generation):
+        """Called at the start of each generation to create necessary directories.
+        
+        Args:
+            generation: Current generation number
+        """
         self.generation = generation
+        # Create directories for robot structure files
         save_path_structure = os.path.join(
             self.save_path, f"generation_{generation}", "structure"
         )
+        # Create directories for controller files
         save_path_controller = os.path.join(
             self.save_path, f"generation_{generation}", "controller"
         )
@@ -1598,13 +1613,24 @@ class SaveResultReporter(neat.BaseReporter):
         os.makedirs(save_path_controller, exist_ok=True)
 
     def post_evaluate(self, config, population, species, best_genome):
+        """Called after evaluating the population to save fitness rankings.
+        
+        Args:
+            config: NEAT configuration
+            population: Current population of genomes
+            species: Current species set
+            best_genome: Genome with highest fitness
+        """
+        # Path for saving fitness rankings
         save_path_ranking = os.path.join(
             self.save_path, f"generation_{self.generation}", "output.txt"
         )
+        # Convert population to lists for sorting
         genome_id_list, genome_list = (
             np.arange(len(population)),
             np.array(list(population.values())),
         )
+        # Sort genomes by fitness in descending order
         sorted_idx = sorted(
             genome_id_list, key=lambda i: genome_list[i].fitness, reverse=True
         )
@@ -1612,11 +1638,74 @@ class SaveResultReporter(neat.BaseReporter):
             list(genome_id_list[sorted_idx]),
             list(genome_list[sorted_idx]),
         )
+        # Write fitness rankings to file
         with open(save_path_ranking, "w") as f:
             out = ""
             for genome_id, genome in zip(genome_id_list, genome_list):
                 out += f"{genome_id}\t\t{genome.fitness}\n"
             f.write(out)
+
+
+class ConnectionReporter(neat.BaseReporter):
+    def __init__(self, connection_history = None):
+        super().__init__()
+        if connection_history is None:
+            self.connection_history = []
+        else:
+            self.connection_history = connection_history
+        self.generation = None
+        
+    def start_generation(self, generation):
+        self.generation = generation
+        
+    def post_evaluate(self, config, population, species, best_genome):
+        # Calculate average and max number of connections for this generation
+        num_connections = [len(genome.connections) for genome in population.values()]
+        connection_stats = {
+            "generation": self.generation,
+            "avg_connections": float(np.mean(num_connections)),
+            "max_connections": int(np.max(num_connections)),
+            "min_connections": int(np.min(num_connections)),
+            "best_genome_connections": len(best_genome.connections)
+        }
+        self.connection_history.append(connection_stats)
+class SpeciesReporter(neat.BaseReporter):
+    def __init__(self, species_history=None):
+        super().__init__()
+        if species_history is None:
+            self.species_history = []
+        else:
+            self.species_history = species_history
+        self.generation = None
+        
+    def start_generation(self, generation):
+        self.generation = generation
+        
+    def post_evaluate(self, config, population, species, best_genome):
+        # Calculate statistics about species for this generation
+        species_stats = {
+            "generation": self.generation,
+            "num_species": len(species.species),
+            "species_sizes": [len(s.members) for s in species.species.values()],
+            "species_fitness": [s.fitness for s in species.species.values()]
+        }
+        
+        # Find which species contains the best genome
+        best_species_id = None
+        for sid, s in species.species.items():
+            if best_genome.key in s.members:
+                best_species_id = sid
+                break
+        species_stats["best_species_id"] = best_species_id
+        
+        # Add average fitness per species
+        species_avg_fitness = {}
+        for sid, s in species.species.items():
+            member_fitness = [m.fitness for m in s.members.values()]
+            species_avg_fitness[sid] = float(np.mean(member_fitness))
+        species_stats["species_avg_fitness"] = species_avg_fitness
+        
+        self.species_history.append(species_stats)
 
 
 def run_cppn_neat(config: ExperimentConfig):
@@ -1678,7 +1767,11 @@ def run_cppn_neat(config: ExperimentConfig):
         neat.StatisticsReporter(),
         neat.StdOutReporter(True),
         SaveResultReporter(save_path),
+        ConnectionReporter(),
+        SpeciesReporter(),
     ]
+    index_connection_reporter = 3
+    index_species_reporter = 4
     for reporter in reporters:
         pop.add_reporter(reporter)
 
@@ -1686,6 +1779,7 @@ def run_cppn_neat(config: ExperimentConfig):
         num_cores, eval_genome_fitness, eval_genome_constraint
     )
 
+    # Run evolution
     pop.run(
         evaluator.evaluate_fitness,
         evaluator.evaluate_constraint,
@@ -1694,7 +1788,11 @@ def run_cppn_neat(config: ExperimentConfig):
 
     best_robot = get_robot_from_genome(pop.best_genome, config)
     best_fitness = pop.best_genome.fitness
-    return best_robot, best_fitness
+
+    connection_history = pop.reporters.reporters[index_connection_reporter].connection_history
+    species_history = pop.reporters.reporters[index_species_reporter].species_history
+    
+    return best_robot, best_fitness, connection_history, species_history, len(pop.best_genome.connections)
 
 ################################################################################
 # Main
@@ -1713,12 +1811,50 @@ def main():
     random.seed(seed)
     np.random.seed(seed)
 
+    # Record start time
+    start_time = datetime.now()
+
     config = ExperimentConfig(save_path=args.out_dir)
-    best_robot, best_fitness = run_cppn_neat(config)
+    best_robot, best_fitness, connection_history, species_history, best_connections = run_cppn_neat(config)
+
+    # Record end time and calculate duration
+    end_time = datetime.now()
+    duration = str(end_time - start_time)
+
+    # Convert robot list to list of block strings for visualization
+    block_mapping = {0: "empty", 1: "rigid block", 2: "soft block", 3: "horizontal actuator", 4: "vertical actuator"}
+    robot_blocks = [[block_mapping[cell] for cell in row] for row in best_robot]
+
+
+    # Prepare final info dictionary
+    final_info = {
+        "results": {
+            "best_fitness": float(best_fitness) if best_fitness is not None else None,
+            "best_robot": robot_blocks if best_robot is not None else None,
+            "best_robot_shape": best_robot.shape if best_robot is not None else None,
+            "best_genome_connections": best_connections,
+            "connection_history": connection_history,
+            "species_history": species_history,
+        },
+        "run_info": {
+            "seed": seed,
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+            "duration": duration,
+            "out_dir": args.out_dir,
+        }
+    }
+
+    # Save final info to JSON file
+    json_path = os.path.join(args.out_dir, config.exp_name, "final_info.json")
+    with open(json_path, 'w') as f:
+        json.dump(final_info, f, indent=4)
 
     print("Best robot:")
     print(best_robot)
     print("Best fitness:", best_fitness)
+    print(f"Best genome connections: {best_connections}")
+    print(f"Final info saved to: {json_path}")
 
 if __name__ == "__main__":
     main()

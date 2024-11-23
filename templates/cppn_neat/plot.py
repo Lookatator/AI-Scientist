@@ -62,7 +62,6 @@ for folder in folders:
 # CREATE LEGEND -- ADD RUNS HERE THAT WILL BE PLOTTED
 labels = {
     "run_0": "CPPN-NEAT",
-    "run_1": "CPPN-NEAT-2",
 }
 
 # Create a programmatic color palette
