@@ -13,7 +13,7 @@ sys.path.insert(0, curr_dir)
 
 from visualize import save_step_robot_image
 
-ENV_NAME = "Thrower-v0"
+ENV_NAME = "Carrier-v0"
 STEP_SAVE_IMAGE = 100
 SEED = 42
 
@@ -73,7 +73,7 @@ def generate_color_palette(n):
 runs = list(labels.keys())
 colors = generate_color_palette(len(runs))
 
-# Plot: Line plot of max fitness across runs
+# Plot 1: Line plot of max fitness across runs
 print("Plotting max fitness across generations...")
 plt.figure(figsize=(10, 6))
 for i, run in enumerate(runs):
@@ -91,15 +91,39 @@ plt.tight_layout()
 plt.savefig("max_fitness_plot.png")
 plt.close()
 
-# Images: Show best robot structure from the final generation
+# Plot 2: Line plot of best fitness so far
+print("Plotting best fitness so far...")
+plt.figure(figsize=(10, 6))
+for i, run in enumerate(runs):
+    generations = results_info[run]["generations"]
+    max_fitness = results_info[run]["max_fitness"]
+    
+    # Calculate cumulative maximum
+    best_so_far = np.maximum.accumulate(max_fitness)
+    
+    plt.plot(generations, best_so_far, label=labels[run], color=colors[i], marker='o')
+
+plt.title("Best Fitness So Far Across Generations")
+plt.xlabel("Generation")
+plt.ylabel("Best Fitness Achieved")
+plt.legend()
+plt.grid(True, which="both", ls="-", alpha=0.2)
+plt.tight_layout()
+plt.savefig("best_fitness_so_far_plot.png")
+plt.close()
+
+# Images: Show best robot structure with the highest fitness across ALL generations
 print("Saving best robot images...")
 for run in runs:
     print(f"Processing {run}...")
-    # Get the last generation number
-    last_gen = max(results_info[run]["generations"])
     
-    # Get path to the last generation's output file
-    gen_path = Path(f"{run}/test_cppn/generation_{last_gen}")
+    # Find the generation with the highest fitness
+    max_fitness_vals = results_info[run]["max_fitness"]
+    best_gen_idx = np.argmax(max_fitness_vals)
+    best_gen = results_info[run]["generations"][best_gen_idx]
+    
+    # Get path to the best generation's output file
+    gen_path = Path(f"{run}/test_cppn/generation_{best_gen}")
     output_file = gen_path / "output.txt"
     
     # Read output file to find best performing individual's ID
@@ -110,4 +134,7 @@ for run in runs:
     body_path = str(gen_path / "structure" / f"{best_id}.npz")
     ctrl_path = str(gen_path / "controller" / f"{best_id}.zip")
     img = save_step_robot_image(ENV_NAME, body_path, ctrl_path, seed=SEED, step=-1)
-    imageio.imsave(f"{run}_robot.png", img)
+    imageio.imsave(f"{run}_best_robot.png", img)  # Changed filename to indicate it's the best robot
+
+    # Print information about the best robot
+    print(f"Best robot in {run} found in generation {best_gen} with fitness {max_fitness_vals[best_gen_idx]}")

@@ -43,8 +43,8 @@ import evogym.envs  # To register the environments, otherwise they are not avail
 
 @dataclass
 class PPOConfig:
-    verbose_ppo: int = 1
-    learning_rate: float = 1e-3
+    verbose_ppo: int = 0
+    learning_rate: float = 2.5e-4
     n_steps: int = 128
     batch_size: int = 64
     n_epochs: int = 4
@@ -54,22 +54,22 @@ class PPOConfig:
     max_grad_norm: float = 0.5
     ent_coef: float = 0.01
     clip_range: float = 0.1
-    total_timesteps: int = 12000  # TODO: 256_000
+    total_timesteps: int = 500_000
     log_interval: int = 100
     n_envs: int = 4
     n_eval_envs: int = 1
-    n_evals: int = 1
-    eval_interval: int = 1e5
+    n_evals: int = 4
+    eval_interval: int = 5e4
 
 
 @dataclass
 class ExperimentConfig:
     save_path: str
     exp_name: str = "test_cppn"
-    env_name: str = "Thrower-v0"
+    env_name: str = "Carrier-v0"  # TODO: change if needed
     pop_size: int = 12
     structure_shape: tuple = (5, 5)
-    max_evaluations: int = 6
+    max_evaluations: int = 59
     num_cores: int = 12
     ppo: PPOConfig = PPOConfig()
 
@@ -1828,25 +1828,29 @@ def main():
 
     # Prepare final info dictionary
     final_info = {
-        "results": {
-            "best_fitness": float(best_fitness) if best_fitness is not None else None,
-            "best_robot": robot_blocks if best_robot is not None else None,
-            "best_robot_shape": best_robot.shape if best_robot is not None else None,
-            "best_genome_connections": best_connections,
-            "connection_history": connection_history,
-            "species_history": species_history,
-        },
-        "run_info": {
-            "seed": seed,
-            "start_time": start_time.isoformat(),
-            "end_time": end_time.isoformat(),
-            "duration": duration,
-            "out_dir": args.out_dir,
+        config.env_name: {
+            "means": {
+                "best_fitness": float(best_fitness) if best_fitness is not None else None, 
+            },
+            "best_robot_properties": {
+                "desc": robot_blocks if best_robot is not None else None,
+                "best_robot_shape": best_robot.shape if best_robot is not None else None,
+                "best_genome_connections": best_connections,
+                "connection_history": connection_history,
+                "species_history": species_history
+            },
+            "run_info": {
+                "seed": seed,
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(), 
+                "duration": duration,
+                "out_dir": args.out_dir
+            }
         }
     }
 
     # Save final info to JSON file
-    json_path = os.path.join(args.out_dir, config.exp_name, "final_info.json")
+    json_path = os.path.join(args.out_dir, "final_info.json")
     with open(json_path, 'w') as f:
         json.dump(final_info, f, indent=4)
 

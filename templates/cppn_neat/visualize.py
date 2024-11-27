@@ -367,7 +367,7 @@ if __name__ == "__main__":
     save_dir = os.path.join(args.exp_root, "all_media")
 
     my_job = Job(
-        name="test_ga",
+        name="visualizations",
         experiment_names=args.experiment_names,
         env_names=args.env_names,
         ranks=[i for i in range(3)],
