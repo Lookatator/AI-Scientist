@@ -1,0 +1,16 @@
+[
+    {
+        "Name": "spatial_modularity",
+        "Title": "Spatial Modularity in Evolved Robot Structures",
+        "Experiment": [
+            "1. Implement sliding window pattern detection for robot structures",
+            "2. Add modularity scoring function get_modularity_score(robot)",
+            "3. Modify eval_genome_fitness to include weighted modularity term",
+            "4. Compare evolution with different modularity weights",
+            "5. Plot fitness vs modularity across generations"
+        ],
+        "Interestingness": 8,
+        "Feasibility": 8,
+        "Novelty": 7
+    }
+]
