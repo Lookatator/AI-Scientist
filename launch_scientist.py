@@ -53,6 +53,13 @@ def parse_arguments():
         help="Model to use for AI Scientist.",
     )
     parser.add_argument(
+        "--model-writeup",
+        type=str,
+        default=None,
+        choices=AVAILABLE_LLMS,
+        help="Model to use for writeup. If not specified, will use the same model as the main AI Scientist.",
+    )
+    parser.add_argument(
         "--writeup",
         type=str,
         default="latex",
@@ -98,6 +105,7 @@ def worker(
         model,
         client,
         client_model,
+        model_writeup,
         writeup,
         improvement,
         gpu_id,
@@ -115,6 +123,7 @@ def worker(
             model,
             client,
             client_model,
+            model_writeup,
             writeup,
             improvement,
             log_file=True,
@@ -128,6 +137,7 @@ def do_idea(
         results_dir,
         idea,
         model,
+        model_writeup,
         client,
         client_model,
         writeup,
@@ -199,15 +209,17 @@ def do_idea(
         print_time()
         print(f"*Starting Writeup*")
         ## PERFORM WRITEUP
+        if model_writeup is None:
+            model_writeup = model
         if writeup == "latex":
             writeup_file = osp.join(folder_name, "latex", "template.tex")
             fnames = [exp_file, writeup_file, notes]
-            if model == "deepseek-coder-v2-0724":
+            if model_writeup == "deepseek-coder-v2-0724":
                 main_model = Model("deepseek/deepseek-coder")
-            elif model == "llama3.1-405b":
+            elif model_writeup == "llama3.1-405b":
                 main_model = Model("openrouter/meta-llama/llama-3.1-405b-instruct")
             else:
-                main_model = Model(model)
+                main_model = Model(model_writeup)
             coder = Coder.create(
                 main_model=main_model,
                 fnames=fnames,
@@ -342,6 +354,7 @@ if __name__ == "__main__":
                     base_dir,
                     results_dir,
                     args.model,
+                    args.model_writeup,
                     client,
                     client_model,
                     args.writeup,
@@ -370,6 +383,7 @@ if __name__ == "__main__":
                     results_dir,
                     idea,
                     args.model,
+                    args.model_writeup,
                     client,
                     client_model,
                     args.writeup,
